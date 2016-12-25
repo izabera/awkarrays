@@ -2,6 +2,7 @@
 
 #pragma once
 #include "s/s.h"
+#include <stdint.h>
 typedef union {
   s str;
   double d; // not NaN or -0, inf and -inf are fine but they probably won't be used
@@ -43,5 +44,12 @@ an0si int elem_is_array(elem *e) { return !elem_is_empty(e) && e->is_array; }
 an0si int elem_is_num(elem *e) { return !elem_is_empty(e) && !elem_is_array(e) && e->is_num; }
 an0si int elem_is_s(elem *e) { return !elem_is_empty(e) && !elem_is_array(e) && !elem_is_num(e); }
 
+an0 void arr_free(arr *);
+an0 void elem_free(elem *);
+an0 elem *elem_set_num(elem *, double);
+an0 elem *elem_set_s(elem *, s *);
+an0 arr *arr_set_elem(arr *, elem *, elem *);
+
+an0 uint32_t elem_hash(elem *);
 #undef an0si
 #undef an0
