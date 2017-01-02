@@ -11,9 +11,11 @@
        var++)
 
 arr *arr_new(arr *a) {
+  // a single array to minimize calls to calloc and free
+  elem *tmp = calloc(32, sizeof(elem));
   *a = (arr) {
-    .v = calloc(16, sizeof(elem)),
-    .k = calloc(16, sizeof(elem)),
+    .v = tmp,
+    .k = tmp + 16,
     .capacity = 16
   };
   return a;
@@ -27,7 +29,7 @@ void arr_free(arr *a) {
     elem_free(&a->v[i]);
   }
   free(a->k);
-  free(a->v);
+  //free(a->v);  it's a single array so free it only once
 }
 
 void elem_free(elem *e) {
@@ -75,11 +77,6 @@ uint32_t elem_hash(elem *e) {
                       : jenkins(e->dbuf, sizeof(double));
 }
 
-// sizes are power of 2
-static elem *arr_lookup(arr *a, elem *key) {
-  uint32_t hash = elem_hash(key);
-}
-
 int elem_cmp(elem *e1, elem *e2) {
   if (elem_is_empty(e1)) return !elem_is_empty(e2);
   if (elem_is_empty(e2)) return !elem_is_empty(e1);
@@ -108,12 +105,34 @@ int elem_cmp(elem *e1, elem *e2) {
 // problem: how to deal with tombstones?
 
 arr *arr_set_elem(arr *a, elem *key, elem *val) {
-  for (elem *e = arr_lookup(a, key); ; e++) {
-    if (elem_is_empty(e) || !elem_cmp(key, e)) {
+  uint32_t idx = elem_hash(key) % a->size;
+  elem *keys = a->k, *values = a->v;
+  for ( ; ; idx = (idx == a->size-1) ? 0 : idx++) {
+    if (elem_is_empty(&keys[idx])) {
+      keys[idx] = *key;
+      goto val;
+    }
+    if (!elem_cmp(key, &keys[idx])) {
+ val: values[idx] = *val;
       break;
     }
   }
   return a;
+}
+
+elem *arr_get_elem(arr *a, elem *key) {
+  uint32_t idx = elem_hash(key) % a->size;
+  elem *keys = a->k, *values = a->v;
+  for ( ; ; idx = (idx == a->size-1) ? 0 : idx++) {
+    // #tombstones * 8 < #entries
+    // #tombstones + #empty >= #entries/2
+    // so this loop always terminates
+    if (elem_is_empty(&keys[idx])) {
+      if (!elem_is_tombstone(&keys[idx])) break; // todo: return null?
+    }
+    else if (!elem_cmp(key, &keys[idx])) break;
+  }
+  return &values[idx];
 }
 
 

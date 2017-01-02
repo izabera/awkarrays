@@ -40,6 +40,7 @@ typedef struct arr {
 #define an0si an0 static inline
 
 an0si int elem_is_empty(elem *e) { return e->is_empty; }
+an0si int elem_is_tombstone(elem *e) { return e->is_tombstone; }
 an0si int elem_is_array(elem *e) { return !elem_is_empty(e) && e->is_array; }
 an0si int elem_is_num(elem *e) { return !elem_is_empty(e) && !elem_is_array(e) && e->is_num; }
 an0si int elem_is_s(elem *e) { return !elem_is_empty(e) && !elem_is_array(e) && !elem_is_num(e); }
