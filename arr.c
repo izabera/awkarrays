@@ -1,6 +1,7 @@
 #include "arr.h"
 #include <stdint.h>
 #include <string.h>
+#include <assert.h>
 
 #define iterate(var, firstelem, ...)                              \
   for (int __i = 0; __i < 1; )                                    \
@@ -12,7 +13,7 @@
 
 arr *arr_new(arr *a) {
   // a single array to minimize calls to calloc and free
-  elem *tmp = calloc(32, sizeof(elem));
+  var *tmp = calloc(32, sizeof(var));
   *a = (arr) {
     .v = tmp,
     .k = tmp + 16,
@@ -25,28 +26,28 @@ arr *arr_new(arr *a) {
 void arr_free(arr *a) {
   // recursively free the whole thing
   for (size_t i = 0; i < a->size; i++) {
-    elem_free(&a->k[i]);
-    elem_free(&a->v[i]);
+    var_free(&a->k[i]);
+    var_free(&a->v[i]);
   }
   free(a->k);
   //free(a->v);  it's a single array so free it only once
 }
 
-void elem_free(elem *e) {
-  if (elem_is_array(e)) arr_free(e->a);
-  else if (elem_is_s(e)) s_free(&e->str);
+void var_free(var *v) {
+  if (var_is_array(v)) arr_free(v->a);
+  else if (var_is_s(v)) s_free(&v->str);
 }
 
-elem *elem_set_num(elem *e, double d) {
-  *e = (elem) { 0 };
-  e->d = d;
-  e->is_num = 1;
-  return e;
+var *var_set_num(var *v, double d) {
+  *v = (var) { 0 };
+  v->d = d;
+  v->is_num = 1;
+  return v;
 }
 
-elem *elem_set_s(elem *e, s *str) {
-  e->str = *str;
-  return e;
+var *var_set_s(var *v, s *str) {
+  v->str = *str;
+  return v;
 }
 
 // idea:
@@ -72,17 +73,18 @@ static uint32_t jenkins(const uint8_t *key, size_t length) {
   return hash;
 }
 
-uint32_t elem_hash(elem *e) {
-  return elem_is_s(e) ? jenkins(s_data(&e->str), s_size(&e->str))
-                      : jenkins(e->dbuf, sizeof(double));
+uint32_t var_hash(var *v) {
+  assert(!var_is_arr(v));
+  return var_is_s(v) ? jenkins(s_data(&v->str), s_size(&v->str))
+                     : jenkins(v->dbuf, sizeof(double));
 }
 
-int elem_cmp(elem *e1, elem *e2) {
-  if (elem_is_empty(e1)) return !elem_is_empty(e2);
-  if (elem_is_empty(e2)) return !elem_is_empty(e1);
+int var_cmp(var *e1, var *e2) {
+  if (var_is_empty(e1)) return !var_is_empty(e2);
+  if (var_is_empty(e2)) return !var_is_empty(e1);
 
-  if (elem_is_num(e1)) return elem_is_num(e2) ? e1->d == e2->d ? 0 : e1->d < e2->d : 1;
-  if (elem_is_s(e1)) return elem_is_s(e2) ? s_cmp(&e1->str, &e2->str) : 1;
+  if (var_is_num(e1)) return var_is_num(e2) ? e1->d == e2->d ? 0 : e1->d < e2->d : 1;
+  if (var_is_s(e1)) return var_is_s(e2) ? s_cmp(&e1->str, &e2->str) : 1;
 
   if (e1->a->size != e2->a->size) return 1;
   // todo
@@ -104,15 +106,15 @@ int elem_cmp(elem *e1, elem *e2) {
 // chain of collisions"
 // problem: how to deal with tombstones?
 
-arr *arr_set_elem(arr *a, elem *key, elem *val) {
-  uint32_t idx = elem_hash(key) % a->size;
-  elem *keys = a->k, *values = a->v;
+arr *arr_set(arr *a, var *key, var *val) {
+  uint32_t idx = var_hash(key) % a->size;
+  var *keys = a->k, *values = a->v;
   for ( ; ; idx = (idx == a->size-1) ? 0 : idx++) {
-    if (elem_is_empty(&keys[idx])) {
+    if (var_is_empty(&keys[idx])) {
       keys[idx] = *key;
       goto val;
     }
-    if (!elem_cmp(key, &keys[idx])) {
+    if (!var_cmp(key, &keys[idx])) {
  val: values[idx] = *val;
       break;
     }
@@ -120,17 +122,18 @@ arr *arr_set_elem(arr *a, elem *key, elem *val) {
   return a;
 }
 
-elem *arr_get_elem(arr *a, elem *key) {
-  uint32_t idx = elem_hash(key) % a->size;
-  elem *keys = a->k, *values = a->v;
-  for ( ; ; idx = (idx == a->size-1) ? 0 : idx++) {
-    // #tombstones * 8 < #entries
-    // #tombstones + #empty >= #entries/2
-    // so this loop always terminates
-    if (elem_is_empty(&keys[idx])) {
-      if (!elem_is_tombstone(&keys[idx])) break; // todo: return null?
+var *var_arr_get(var *a, var *key) {
+  uint32_t mask = a->mask,
+           idx = var_hash(key) & hash,
+           cnt = 0,
+           maxprobe = a->maxprobe;
+  var *keys = a->key, *values = keys + var_arrcapacity(a);
+
+  for ( ; cnt < maxprobe; idx = (idx + ++cnt) & mask) {
+    if (var_is_empty(&keys[idx])) {
+      if (!var_is_tombstone(&keys[idx])) break; // todo: return null?
     }
-    else if (!elem_cmp(key, &keys[idx])) break;
+    else if (!var_cmp(key, &keys[idx])) break;
   }
   return &values[idx];
 }
@@ -138,14 +141,12 @@ elem *arr_get_elem(arr *a, elem *key) {
 
 #include <stdio.h>
 int main() {
-  arr a;
-  arr_new(&a);
-  elem key, value;
-  s str;
-  elem_set_s(&key, s_new(&str, "foobar"));
-  elem_set_num(&value, 1234.5678);
-  arr_set_elem(&a, &key, &value);
-  arr_free(&a);
+  var arr;
+  var_new_array(&arr);
+  var_set(&arr, var_tmp("foobar"), var_tmp(1234.5678));
+  var_set(&arr, var_tmp("meow"), var_tmp("cat"));
+  var_set(&arr, var_tmp(1234), var_tmp(5678));
+  var_free(&arr);
 
   /*awk_eval("myarray[0] = \"hi mom\"");*/
   /*awk_eval("myarray[1][0] = 123");*/
