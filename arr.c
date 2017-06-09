@@ -11,43 +11,18 @@
        var < __tmp + sizeof __tmp/sizeof *__tmp;                  \
        var++)
 
-arr *arr_new(arr *a) {
-  // a single array to minimize calls to calloc and free
-  var *tmp = calloc(32, sizeof(var));
-  *a = (arr) {
-    .v = tmp,
-    .k = tmp + 16,
-    .capacity = 16
-  };
-  return a;
-}
-
-
-void arr_free(arr *a) {
-  // recursively free the whole thing
-  for (size_t i = 0; i < a->size; i++) {
-    var_free(&a->k[i]);
-    var_free(&a->v[i]);
-  }
-  free(a->k);
-  //free(a->v);  it's a single array so free it only once
-}
-
 void var_free(var *v) {
-  if (var_is_array(v)) arr_free(v->a);
-  else if (var_is_s(v)) s_free(&v->str);
-}
-
-var *var_set_num(var *v, double d) {
-  *v = (var) { 0 };
-  v->d = d;
-  v->is_num = 1;
-  return v;
-}
-
-var *var_set_s(var *v, s *str) {
-  v->str = *str;
-  return v;
+  if (var_is_empty(v)) return;
+  if (var_is_s(v)) s_free(&v->str);
+  else if (var_is_array(v)) {
+    var *keys = v->data, *values = v->data + var_arr_capacity(v);
+    // recursively free the whole thing
+    for (size_t i = 0; i < var_arr_capacity(v); i++) {
+      var_free(&keys[i]);
+      var_free(&values[i]);
+    }
+    free(v->data);
+  }
 }
 
 // idea:
@@ -74,7 +49,7 @@ static uint32_t jenkins(const uint8_t *key, size_t length) {
 }
 
 uint32_t var_hash(var *v) {
-  assert(!var_is_arr(v));
+  assert(!var_is_array(v));
   return var_is_s(v) ? jenkins(s_data(&v->str), s_size(&v->str))
                      : jenkins(v->dbuf, sizeof(double));
 }
@@ -86,7 +61,7 @@ int var_cmp(var *e1, var *e2) {
   if (var_is_num(e1)) return var_is_num(e2) ? e1->d == e2->d ? 0 : e1->d < e2->d : 1;
   if (var_is_s(e1)) return var_is_s(e2) ? s_cmp(&e1->str, &e2->str) : 1;
 
-  if (e1->a->size != e2->a->size) return 1;
+  if (var_arr_size(e1) != var_arr_size(e2)) return 1;
   // todo
 #warning "finish this"
   return 0;
@@ -106,8 +81,8 @@ int var_cmp(var *e1, var *e2) {
 // chain of collisions"
 // problem: how to deal with tombstones?
 
-arr *arr_set(arr *a, var *key, var *val) {
-  uint32_t idx = var_hash(key) % a->size;
+var *var_set_keyvar(var *a, var *key, var *val) {
+  uint32_t idx = var_hash(key) & (var_arr_capacity(a)-1);
   var *keys = a->k, *values = a->v;
   for ( ; ; idx = (idx == a->size-1) ? 0 : idx++) {
     if (var_is_empty(&keys[idx])) {
@@ -127,7 +102,7 @@ var *var_arr_get(var *a, var *key) {
            idx = var_hash(key) & hash,
            cnt = 0,
            maxprobe = a->maxprobe;
-  var *keys = a->key, *values = keys + var_arrcapacity(a);
+  var *keys = a->key, *values = keys + var_arr_capacity(a);
 
   for ( ; cnt < maxprobe; idx = (idx + ++cnt) & mask) {
     if (var_is_empty(&keys[idx])) {
@@ -144,8 +119,8 @@ int main() {
   var arr;
   var_new_array(&arr);
   var_set(&arr, var_tmp("foobar"), var_tmp(1234.5678));
-  var_set(&arr, var_tmp("meow"), var_tmp("cat"));
-  var_set(&arr, var_tmp(1234), var_tmp(5678));
+  /*var_set(&arr, var_tmp("meow"), var_tmp("cat"));*/
+  /*var_set(&arr, var_tmp(1234), var_tmp(5678));*/
   var_free(&arr);
 
   /*awk_eval("myarray[0] = \"hi mom\"");*/
